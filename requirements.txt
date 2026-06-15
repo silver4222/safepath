@@ -1,5 +1,5 @@
 streamlit
-requests
-folium
 streamlit-folium
+folium
+requests
 geopy
