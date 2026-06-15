@@ -10,12 +10,19 @@ st.set_page_config(
 )
 
 st.title("🛡️ SafePath Navigator")
-st.caption("안전을 고려한 도보 경로 추천 서비스")
+st.write("지도를 클릭해서 출발지와 도착지를 선택하세요.")
 
-st.markdown("---")
+if "start" not in st.session_state:
+    st.session_state.start = None
+
+if "end" not in st.session_state:
+    st.session_state.end = None
 
 
-def get_routes(start_lat, start_lon, end_lat, end_lon):
+def get_routes(start, end):
+    start_lat, start_lon = start
+    end_lat, end_lon = end
+
     url = (
         f"https://router.project-osrm.org/route/v1/foot/"
         f"{start_lon},{start_lat};{end_lon},{end_lat}"
@@ -25,7 +32,6 @@ def get_routes(start_lat, start_lon, end_lat, end_lon):
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
-
         data = response.json()
 
         if "routes" not in data:
@@ -33,155 +39,171 @@ def get_routes(start_lat, start_lon, end_lat, end_lon):
 
         return data["routes"]
 
-    except Exception:
+    except:
         return []
 
 
-def calculate_safety_score(distance_m):
-    if distance_m < 1000:
+def safety_score(distance):
+    if distance < 1000:
         return 95
-    elif distance_m < 3000:
+    elif distance < 3000:
         return 85
     else:
         return 75
 
 
+m = folium.Map(
+    location=[36.8151, 127.1139],  # 천안
+    zoom_start=14
+)
+
+if st.session_state.start:
+    folium.Marker(
+        st.session_state.start,
+        tooltip="출발지",
+        icon=folium.Icon(color="green")
+    ).add_to(m)
+
+if st.session_state.end:
+    folium.Marker(
+        st.session_state.end,
+        tooltip="도착지",
+        icon=folium.Icon(color="red")
+    ).add_to(m)
+
+map_data = st_folium(
+    m,
+    height=500,
+    width=None
+)
+
+clicked = map_data.get("last_clicked")
+
+if clicked:
+
+    point = (
+        clicked["lat"],
+        clicked["lng"]
+    )
+
+    if st.session_state.start is None:
+        st.session_state.start = point
+        st.success("출발지가 선택되었습니다.")
+
+    elif st.session_state.end is None:
+        st.session_state.end = point
+        st.success("도착지가 선택되었습니다.")
+
+st.write("### 선택된 위치")
+
+st.write("출발지:", st.session_state.start)
+st.write("도착지:", st.session_state.end)
+
 col1, col2 = st.columns(2)
 
 with col1:
-    start_lat = st.number_input(
-        "출발지 위도",
-        value=37.5665,
-        format="%.6f"
-    )
-
-    start_lon = st.number_input(
-        "출발지 경도",
-        value=126.9780,
-        format="%.6f"
-    )
+    if st.button("다시 선택"):
+        st.session_state.start = None
+        st.session_state.end = None
+        st.rerun()
 
 with col2:
-    end_lat = st.number_input(
-        "도착지 위도",
-        value=37.5700,
-        format="%.6f"
-    )
+    if st.button("경로 찾기"):
 
-    end_lon = st.number_input(
-        "도착지 경도",
-        value=126.9920,
-        format="%.6f"
-    )
+        if (
+            st.session_state.start is None
+            or st.session_state.end is None
+        ):
+            st.warning("출발지와 도착지를 모두 선택하세요.")
 
-
-if st.button("경로 찾기", use_container_width=True):
-
-    with st.spinner("경로를 탐색 중입니다..."):
-
-        routes = get_routes(
-            start_lat,
-            start_lon,
-            end_lat,
-            end_lon
-        )
-
-    if not routes:
-        st.error("경로를 찾을 수 없습니다.")
-        st.stop()
-
-    m = folium.Map(
-        location=[start_lat, start_lon],
-        zoom_start=15
-    )
-
-    colors = ["green", "blue", "red"]
-
-    route_info = []
-
-    for idx, route in enumerate(routes[:3]):
-
-        coords = route["geometry"]["coordinates"]
-
-        latlon = [
-            [c[1], c[0]]
-            for c in coords
-        ]
-
-        distance_km = route["distance"] / 1000
-        duration_min = route["duration"] / 60
-
-        score = calculate_safety_score(
-            route["distance"]
-        )
-
-        route_info.append({
-            "name": (
-                "안전 경로"
-                if idx == 0 else
-                f"대체 경로 {idx}"
-            ),
-            "distance": distance_km,
-            "duration": duration_min,
-            "score": score
-        })
-
-        folium.PolyLine(
-            latlon,
-            color=colors[idx % len(colors)],
-            weight=6,
-            opacity=0.8,
-            tooltip=f"경로 {idx+1}"
-        ).add_to(m)
-
-    folium.Marker(
-        [start_lat, start_lon],
-        tooltip="출발"
-    ).add_to(m)
-
-    folium.Marker(
-        [end_lat, end_lon],
-        tooltip="도착"
-    ).add_to(m)
-
-    st.subheader("🗺️ 경로 지도")
-
-    st_folium(
-        m,
-        width=None,
-        height=600
-    )
-
-    st.subheader("📊 경로 비교")
-
-    cols = st.columns(len(route_info))
-
-    for i, route in enumerate(route_info):
-
-        with cols[i]:
-            st.metric(
-                "경로",
-                route["name"]
+        else:
+            routes = get_routes(
+                st.session_state.start,
+                st.session_state.end
             )
 
-            st.write(
-                f"📏 {route['distance']:.2f} km"
-            )
+            if not routes:
+                st.error("경로를 찾을 수 없습니다.")
 
-            st.write(
-                f"⏱️ {route['duration']:.1f} 분"
-            )
+            else:
+                route_map = folium.Map(
+                    location=st.session_state.start,
+                    zoom_start=15
+                )
 
-            st.write(
-                f"🛡️ 안전도 {route['score']}"
-            )
+                colors = [
+                    "green",
+                    "blue",
+                    "red"
+                ]
 
-    best_route = max(
-        route_info,
-        key=lambda x: x["score"]
-    )
+                infos = []
 
-    st.success(
-        f"추천 경로: {best_route['name']} "
-        f"(안전도 {best_route['score']})"
-    )
+                for i, route in enumerate(routes[:3]):
+
+                    coords = route["geometry"]["coordinates"]
+
+                    points = [
+                        [c[1], c[0]]
+                        for c in coords
+                    ]
+
+                    distance = route["distance"] / 1000
+                    duration = route["duration"] / 60
+                    score = safety_score(
+                        route["distance"]
+                    )
+
+                    infos.append(
+                        {
+                            "name":
+                                "추천 안전 경로"
+                                if i == 0
+                                else f"대체 경로 {i}",
+                            "distance": distance,
+                            "duration": duration,
+                            "score": score
+                        }
+                    )
+
+                    folium.PolyLine(
+                        points,
+                        color=colors[i],
+                        weight=6,
+                        tooltip=f"경로 {i+1}"
+                    ).add_to(route_map)
+
+                folium.Marker(
+                    st.session_state.start,
+                    tooltip="출발지",
+                    icon=folium.Icon(color="green")
+                ).add_to(route_map)
+
+                folium.Marker(
+                    st.session_state.end,
+                    tooltip="도착지",
+                    icon=folium.Icon(color="red")
+                ).add_to(route_map)
+
+                st.subheader("🗺️ 경로")
+
+                st_folium(
+                    route_map,
+                    height=600,
+                    width=None
+                )
+
+                st.subheader("📊 경로 비교")
+
+                for info in infos:
+                    st.write(
+                        f"""
+                        **{info['name']}**
+
+                        📏 거리 : {info['distance']:.2f} km
+
+                        ⏱️ 시간 : {info['duration']:.1f} 분
+
+                        🛡️ 안전도 : {info['score']}
+                        """
+                    )
