@@ -11,25 +11,28 @@ st.set_page_config(
 )
 
 st.title("🛡️ 안전 귀가 네비게이션")
-st.caption("도보 경로와 예상 시간을 제공합니다.")
+st.write("도보 길찾기 서비스")
 
-# -----------------
+# ==========================
 # Session State
-# -----------------
+# ==========================
 if "start" not in st.session_state:
     st.session_state.start = None
 
 if "end" not in st.session_state:
     st.session_state.end = None
 
-if "routes" not in st.session_state:
-    st.session_state.routes = None
+if "show_route" not in st.session_state:
+    st.session_state.show_route = False
 
-# -----------------
+if "routes" not in st.session_state:
+    st.session_state.routes = []
+
+# ==========================
 # 장소 검색
-# -----------------
+# ==========================
 geolocator = Nominatim(
-    user_agent="safe_path"
+    user_agent="safe_navigation"
 )
 
 
@@ -43,98 +46,87 @@ def search_place(place):
                 loc.longitude
             )
 
-        return None
-
     except:
-        return None
+        pass
+
+    return None
 
 
-# -----------------
-# ORS 길찾기
-# -----------------
+# ==========================
+# 도보 경로
+# ==========================
 def get_routes(start, end):
 
-    api_key = st.secrets["ORS_API_KEY"]
+    slat, slon = start
+    elat, elon = end
 
     url = (
-        "https://api.openrouteservice.org/"
-        "v2/directions/foot-walking/geojson"
+        f"https://router.project-osrm.org/"
+        f"route/v1/foot/"
+        f"{slon},{slat};"
+        f"{elon},{elat}"
+        f"?overview=full"
+        f"&geometries=geojson"
+        f"&alternatives=true"
     )
 
-    body = {
-        "coordinates": [
-            [start[1], start[0]],
-            [end[1], end[0]]
-        ],
-        "alternative_routes": {
-            "target_count": 3,
-            "share_factor": 0.6
-        }
-    }
-
-    headers = {
-        "Authorization": api_key,
-        "Content-Type": "application/json"
-    }
-
     try:
-        response = requests.post(
+        r = requests.get(
             url,
-            json=body,
-            headers=headers,
-            timeout=20
+            timeout=15
         )
 
-        response.raise_for_status()
+        data = r.json()
 
-        data = response.json()
+        if data["code"] != "Ok":
+            return []
 
-        return data["features"]
+        return data["routes"]
 
     except:
         return []
 
 
-# -----------------
+# ==========================
 # 장소 검색
-# -----------------
+# ==========================
 st.subheader("🔍 장소 검색")
 
 c1, c2 = st.columns(2)
 
 with c1:
-    start_place = st.text_input(
+    start_text = st.text_input(
         "출발지",
-        placeholder="예) 천안역"
+        placeholder="예: 천안역"
     )
 
 with c2:
-    end_place = st.text_input(
+    end_text = st.text_input(
         "도착지",
-        placeholder="예) 단국대학교 천안캠퍼스"
+        placeholder="예: 단국대학교 천안캠퍼스"
     )
 
 if st.button("장소 검색"):
 
-    if start_place:
-        result = search_place(start_place)
+    if start_text:
+        result = search_place(start_text)
 
         if result:
             st.session_state.start = result
         else:
             st.error("출발지를 찾을 수 없습니다.")
 
-    if end_place:
-        result = search_place(end_place)
+    if end_text:
+        result = search_place(end_text)
 
         if result:
             st.session_state.end = result
         else:
             st.error("도착지를 찾을 수 없습니다.")
 
-# -----------------
+# ==========================
 # 지도
-# -----------------
+# ==========================
 st.subheader("🗺️ 지도에서 선택")
 
 m = folium.Map(
@@ -158,10 +150,13 @@ if st.session_state.end:
 
 map_data = st_folium(
     m,
-    height=500
+    height=500,
+    key="map"
 )
 
-clicked = map_data.get("last_clicked")
+clicked = map_data.get(
+    "last_clicked"
+)
 
 if clicked:
 
@@ -181,16 +176,18 @@ if clicked:
 st.write("출발지 :", st.session_state.start)
 st.write("도착지 :", st.session_state.end)
 
-# -----------------
+# ==========================
 # 버튼
-# -----------------
+# ==========================
 c1, c2 = st.columns(2)
 
 with c1:
     if st.button("다시 선택"):
+
         st.session_state.start = None
         st.session_state.end = None
-        st.session_state.routes = None
+        st.session_state.routes = []
+        st.session_state.show_route = False
         st.rerun()
 
 with c2:
@@ -206,15 +203,25 @@ with c2:
             )
 
         else:
-            st.session_state.routes = get_routes(
+            routes = get_routes(
                 st.session_state.start,
                 st.session_state.end
             )
 
-# -----------------
-# 결과 출력
-# -----------------
-if st.session_state.routes:
+            if routes:
+                st.session_state.routes = routes
+                st.session_state.show_route = True
+            else:
+                st.error(
+                    "도보 경로를 찾을 수 없습니다."
+                )
+
+# ==========================
+# 결과
+# ==========================
+if st.session_state.show_route:
+
+    st.subheader("🚶 도보 경로")
 
     route_map = folium.Map(
         location=st.session_state.start,
@@ -230,27 +237,24 @@ if st.session_state.routes:
     infos = []
 
     for i, route in enumerate(
-            st.session_state.routes):
+        st.session_state.routes[:3]
+    ):
 
-        coords = route["geometry"][
-            "coordinates"
-        ]
+        coords = route[
+            "geometry"
+        ]["coordinates"]
 
         points = [
             [c[1], c[0]]
             for c in coords
         ]
 
-        summary = route[
-            "properties"
-        ]["summary"]
-
         distance = (
-            summary["distance"] / 1000
+            route["distance"] / 1000
         )
 
         duration = round(
-            summary["duration"] / 60
+            route["duration"] / 60
         )
 
         name = (
@@ -269,7 +273,7 @@ if st.session_state.routes:
             points,
             color=colors[i % 3],
             weight=6,
-            tooltip=f"{name} · 도보 {duration}분"
+            tooltip=f"{name} · {duration}분"
         ).add_to(route_map)
 
     folium.Marker(
@@ -282,11 +286,10 @@ if st.session_state.routes:
         tooltip="도착"
     ).add_to(route_map)
 
-    st.subheader("🗺️ 경로")
-
     st_folium(
         route_map,
-        height=600
+        height=600,
+        key="route_map"
     )
 
     st.subheader("📊 경로 비교")
